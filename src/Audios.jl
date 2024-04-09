@@ -4,22 +4,21 @@ using WAV, DSP
 using StatsBase
 using ProgressMeter
 
-export import_audio,
+export import_audios,
 	make_spectrograms,
-	make_data
+	pad_spectrograms
 
 # read WAV files into an array
-function import_audio(files::Vector{String})
+function import_audios(files::Vector{String})
 	signal = []
 	sr = []
-	@showprogress for f ∈ files
+	@showprogress "Importing audios..." for f ∈ files
 		y, s = wavread(f)
 		push!(signal, vec(y))
 		push!(sr, s)
 	end
 	return signal, sr
 end
-
 
 # spectrograms
 mutable struct Spectrogram
@@ -33,38 +32,32 @@ mutable struct Spectrogram
 	end
 end
 
-function make_spectrograms(x::Vector)
-	spec_list = Spectrogram[]
-	@showprogress for s ∈ x
-		spec = Spectrogram(s)
-		push!(spec_list, spec)
+# input data
+function make_spectrograms(x::Vector; trans = nothing)
+	@showprogress "Generating spectrograms..." for (i, xi) ∈ enumerate(x)
+		xi = transpose(Spectrogram(xi).db)
+		if trans !== nothing
+			dt = fit(trans, xi, dims = 2)
+			xi = StatsBase.transform(dt, xi)
+		end
+		x[i] = xi
 	end
-	return spec_list
+	return x
 end
 
-
-# input data
-function make_data(x::Vector; pad::Bool = true, trans = nothing)
-
-	max_cols = maximum(map(x -> size(x.db, 2), x))
-	y = rand(max_cols, size(first(x).db, 1), length(x))
-
-	@showprogress for (i, s) ∈ enumerate(x)
-		y_i = transpose(s.db)
-		dim = size(y_i)
-		# pad zeroes to make all matrices of same size
-		if pad && dim[1] < max_cols
-			z = rand(Float64, (max_cols - dim[1], dim[2]))
-			y_i = vcat(y_i, z)
+# pad zeroes to make all matrices of same size
+function pad_spectrograms(x::Vector, cols::Int)
+	@showprogress "Padding spectograms to $(cols) time steps..." for (i, xi) ∈ enumerate(x)
+		if size(xi, 1) < cols
+			z = rand(Float64, (cols - size(xi, 1), size(xi, 2)))
+			xi = vcat(xi, z)
+		elseif size(xi, 1) > cols
+			@warn "Element $(i) more than $(cols) timestamps"
 		end
-
-		if trans ≠ nothing
-			dt = fit(trans, y_i, dims = 2)
-			y_i = StatsBase.transform(dt, y_i)
-		end
-		y[:, :, i] = y_i
+		x[i] = xi
 	end
-	return y
+	return x
+	@info "Padded spectograms to be $(cols) time steps long"
 end
 
 end
