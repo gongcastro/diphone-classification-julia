@@ -60,4 +60,8 @@ function pad_spectrograms(x::Vector, cols::Int)
 	@info "Padded spectograms to be $(cols) time steps long"
 end
 
+function plot_spectrogram(x::Spectrogram; file::String = nothing)
+	heatmap(x.db)
+end
+
 end

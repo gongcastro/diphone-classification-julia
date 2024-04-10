@@ -1,5 +1,5 @@
-include("Audios.jl")
-include("Model.jl")
+include("src/Audios.jl")
+include("src/Model.jl")
 
 using .Audios, .Model
 using Flux, Plots, Random, StatsBase
@@ -29,7 +29,7 @@ diphones = getindex.(split.(wav_names, "_"), 2)
 train_idx = shuffle(findall(i -> i ∈ train_diphones, diphones))
 test_idx = shuffle(findall(i -> i ∈ test_diphones, diphones))
 
-X = make_features(wav_files)
+X = make_features(wav_files; pad = true)
 y, labels = make_targets(wav_files)
 
 X_train = X[train_idx]
@@ -48,28 +48,19 @@ n_output = length(unique(y_train)) - 1
 # TRAINING LOOP #
 #################
 
-idxs = sample(shuffle(1:length(X)), 100)
-X_a = X[idxs]
-y_a = y[idxs]
-
 begin
 	model = Chain(
-		GRU(n_input => n_hidden),
+		LSTM(n_input => n_hidden),
 		Dense(n_hidden => n_output, sigmoid),
 		sigmoid,
 	)
-	epochs = 20
+	epochs = 10
 	opt_state = Flux.setup(ADAM(0.001), model)
 	N = length(X_test)
 	loss_hist = []
 	acc_hist = []
 	ps_hist = []
 end
-
-function my_loss(pred, y)
-	return Flux.Losses.logitbinarycrossentropy(pred, y, agg = mean)
-end
-Flux
 
 for epoch ∈ 1:epochs
 
@@ -80,7 +71,7 @@ for epoch ∈ 1:epochs
 
 		loss_val, ∇ = Flux.withgradient(model) do m
 			Flux.reset!(model)
-			loss_val = my_loss(m(x), y)
+			loss_val = Flux.Losses.logitbinarycrossentropy(last(m(x)), y)
 			return loss_val
 		end
 
@@ -89,22 +80,28 @@ for epoch ∈ 1:epochs
 		end
 		push!(loss_vec, loss_val)
 	end
-
-	push!(acc_vec, acc_val)
+	mean_loss = mean(loss_val)
 
 	Flux.update!(opt_state, model, ∇[1])
-	push!(ps_hist, Flux.params(model))
-	mean_loss = mean(loss_val)
-	#mean_acc = mean(acc_val)
+
+
+	acc_vec = []
+	for (x, y) in zip(X_test, y_test)
+		acc_val = mean(get_accuracy(model(x), y))
+		push!(acc_vec, acc_val)
+	end
+	mean_acc = mean(filter(!isnan, acc_vec))
+
 
 	push!(loss_hist, mean_loss)
-	#push!(acc_hist, mean_acc)
+	push!(acc_hist, mean_acc)
 
-	@info "Epoch $(epoch), loss = $(mean_loss)"
+	@info "Epoch $(epoch), loss = $(mean_loss), acc = $(mean(acc_vec))"
 end
 
 acc_val = mean([last(model(xi)) .>= 0.5 .== yi for (xi, yi) in zip(X_test, y_test)])
 
+heatmap(X_train[1])
 
 acc = make_predictions(model, X_test, y_test)
 
