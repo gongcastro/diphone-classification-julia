@@ -16,7 +16,7 @@ export make_features,
 
 function make_features(files::Vector{String})
 	audios, sr = import_audios(files)
-	x = make_spectrograms(audios; trans = StatsBase.ZScoreTransform)
+	x = make_spectrograms(audios; trans = StatsBase.UnitRangeTransform)
 	max_cols = maximum(map(x -> size(x, 1), x))
 	x = pad_spectrograms(x, max_cols)
 	x = convert.(Array{Float32}, x)
@@ -38,10 +38,6 @@ Base.@kwdef mutable struct Args
 	throttle::Int = 10
 end
 
-function get_loss(y_model, y_true)
-	Flux.reset!(model)
-
-end
 
 function get_accuracy(result, label)
 	pred = convert.(Int, result .>= 0.5)
