@@ -19,7 +19,7 @@ unique_speakers = unique(getindex.(split.(wav_names, "_"), 3))
 
 # Train-Test split --------------------------------------------------------------
 
-prop_train = 0.10
+prop_train = 0.80
 indices = 1:length(unique_diphones)
 n_train = convert(Int32, floor(length(indices) * prop_train))
 train_diphones = sample(unique_diphones, n_train, replace = false)
@@ -29,7 +29,7 @@ diphones = getindex.(split.(wav_names, "_"), 2)
 train_idx = shuffle(findall(i -> i ∈ train_diphones, diphones))
 test_idx = shuffle(findall(i -> i ∈ test_diphones, diphones))
 
-X = make_features(wav_files; pad = true)
+X = make_features(wav_files; pad = true, trans = StatsBase.ZScoreTransform)
 y, labels = make_targets(wav_files)
 
 X_train = X[train_idx]
@@ -48,56 +48,85 @@ n_output = length(unique(y_train)) - 1
 # TRAINING LOOP #
 #################
 
+idx = sample(1:length(X_train), length(X_train), replace = false)
+X_train = X_train[idx]
+y_train = y_train[idx]
+data = Flux.DataLoader((X_train, y_train), batchsize = 4)
+
 begin
 	model = Chain(
-		LSTM(n_input => n_hidden),
-		Dense(n_hidden => n_output, sigmoid),
+		RNN(n_input => n_output),
 		sigmoid,
 	)
-	epochs = 10
-	opt_state = Flux.setup(ADAM(0.001), model)
+	epochs = 50
+	opt = Adam(0.01)
+	opt_state = Flux.setup(opt, model)
 	N = length(X_test)
 	loss_hist = []
 	acc_hist = []
-	ps_hist = []
 end
 
+model = Chain(
+	LSTM(n_input => n_output),
+	sigmoid,
+)
+
+
+function loss(y_pred, y_true)
+	return Flux.logitbinarycrossentropy(y_pred, y_true)
+end
+
+function accuracy(pred, y)
+	pred = convert.(Int, pred .>= 0.5)
+	return last(pred .== y)
+end
+
+
+#losses = [loss(model, X_train, y_train)]
+opt = ADAM(0.001)
+opt_state = Flux.setup(opt, model)
+loss_hist = []
+preds_hist = []
 for epoch ∈ 1:epochs
 
-	loss_vec = []
-	acc_vec = []
-	local ∇
-	@showprogress for (x, y) in zip(X_train, y_train)
-
-		loss_val, ∇ = Flux.withgradient(model) do m
+	losses = Float32[]
+	local grads
+	local val
+	local acc_val
+	for (x, y) in zip(X_train, y_train)
+		val, grads = Flux.withgradient(model) do m
 			Flux.reset!(model)
-			loss_val = Flux.Losses.logitbinarycrossentropy(last(m(x)), y)
-			return loss_val
+			Flux.logitbinarycrossentropy(m(x), y)
 		end
-
-		if !isfinite(loss_val)
-			continue
-		end
-		push!(loss_vec, loss_val)
+		acc_val = mean(accuracy(model, x, y))
 	end
-	mean_loss = mean(loss_val)
-
-	Flux.update!(opt_state, model, ∇[1])
-
-
-	acc_vec = []
-	for (x, y) in zip(X_test, y_test)
-		acc_val = mean(get_accuracy(model(x), y))
-		push!(acc_vec, acc_val)
+	push!(loss_hist, val)
+	preds = map(X_test) do x
+		Flux.reset!(model)
+		model(x)
 	end
-	mean_acc = mean(filter(!isnan, acc_vec))
+	push!(preds_hist, preds)
+	acc_val = mean(accuracy.(preds, y_test))
+	push!(acc_hist, acc_val)
 
+	Flux.update!(opt_state, model, grads[1])
+	@info "Epoch $(epoch):" loss = val, acc = acc_val
 
-	push!(loss_hist, mean_loss)
-	push!(acc_hist, mean_acc)
-
-	@info "Epoch $(epoch), loss = $(mean_loss), acc = $(mean(acc_vec))"
 end
+
+mean_loss = mean(losses)
+push!(loss_hist, mean_loss)
+
+#mean_acc = mean(acc_val)
+#push!(acc_hist, mean_acc)
+
+#acc_vec = []
+#@showprogress "Computing accuracy..." for x in X_test
+#		acc_val = mean(convert.(Int, model(x) .>= 0.5) .== y_test)#
+#	push!(acc_vec, acc_val)
+#end
+@info "Epoch $(epoch), loss = $(mean_loss)"
+
 
 acc_val = mean([last(model(xi)) .>= 0.5 .== yi for (xi, yi) in zip(X_test, y_test)])
 

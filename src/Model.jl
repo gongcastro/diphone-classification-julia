@@ -14,9 +14,9 @@ export make_features,
 	make_predictions,
 	train_model
 
-function make_features(files::Vector{String}; pad::Bool = true)
+function make_features(files::Vector{String}; pad::Bool = true, trans = nothing)
 	audios, sr = import_audios(files)
-	x = make_spectrograms(audios; trans = StatsBase.UnitRangeTransform)
+	x = make_spectrograms(audios; trans = trans)
 	max_cols = maximum(map(x -> size(x, 1), x))
 	if pad
 		x = pad_spectrograms(x, max_cols)
