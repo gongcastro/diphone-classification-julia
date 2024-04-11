@@ -76,9 +76,9 @@ function loss(y_pred, y_true)
 	return Flux.logitbinarycrossentropy(y_pred, y_true)
 end
 
-function accuracy(pred, y)
-	pred = convert.(Int, pred .>= 0.5)
-	return last(pred .== y)
+function accuracy(preds, y)
+	acc = [mean(convert.(Int, p .>= 0.5)) for p in preds[1]]
+	return acc
 end
 
 
@@ -87,8 +87,8 @@ opt = ADAM(0.001)
 opt_state = Flux.setup(opt, model)
 loss_hist = []
 preds_hist = []
+acc_hist = []
 for epoch ∈ 1:epochs
-
 	losses = Float32[]
 	local grads
 	local val
@@ -98,19 +98,19 @@ for epoch ∈ 1:epochs
 			Flux.reset!(model)
 			Flux.logitbinarycrossentropy(m(x), y)
 		end
-		acc_val = mean(accuracy(model, x, y))
 	end
 	push!(loss_hist, val)
-	preds = map(X_test) do x
+
+	preds = map(model) do m
 		Flux.reset!(model)
-		model(x)
+		[m(x) for x in X_test]
 	end
 	push!(preds_hist, preds)
-	acc_val = mean(accuracy.(preds, y_test))
+	acc_val = mean(accuracy(preds, y_test))
 	push!(acc_hist, acc_val)
 
 	Flux.update!(opt_state, model, grads[1])
-	@info "Epoch $(epoch):" loss = val, acc = acc_val
+	@info "Epoch $(epoch):" loss = val acc = acc_val
 
 end
 
