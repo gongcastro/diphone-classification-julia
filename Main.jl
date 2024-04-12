@@ -2,8 +2,8 @@ include("src/Audios.jl")
 include("src/Model.jl")
 
 using .Audios, .Model
-using Flux, Plots, Random, StatsBase
-using ProgressMeter
+using Flux, Zygote
+using ProgressMeter, Plots, Random, StatsBase
 Plots.PythonPlotBackend()
 Random.seed!(1234)
 
@@ -53,64 +53,58 @@ X_train = X_train[idx]
 y_train = y_train[idx]
 data = Flux.DataLoader((X_train, y_train), batchsize = 4)
 
+function loss(ŷ, y)
+	Flux.reset!(model)
+	return Flux.logitbinarycrossentropy(ŷ, y)
+end
+
+function accuracy(ŷ, y)
+	return convert.(Int, ŷ .>= 0.5) .== y
+end
+
 begin
-	model = Chain(
-		RNN(n_input => n_output),
-		sigmoid,
-	)
-	epochs = 50
-	opt = Adam(0.01)
+	model = Chain(LSTM(n_input => n_output), σ)
+	epochs = 30
+	opt = Adam(1e-3)
 	opt_state = Flux.setup(opt, model)
 	N = length(X_test)
 	loss_hist = []
 	acc_hist = []
 end
 
-model = Chain(
-	LSTM(n_input => n_output),
-	sigmoid,
-)
-
-
-function loss(y_pred, y_true)
-	return Flux.logitbinarycrossentropy(y_pred, y_true)
-end
-
-function accuracy(preds, y)
-	acc = [mean(convert.(Int, p .>= 0.5)) for p in preds[1]]
-	return acc
-end
-
-
-#losses = [loss(model, X_train, y_train)]
-opt = ADAM(0.001)
-opt_state = Flux.setup(opt, model)
-loss_hist = []
-preds_hist = []
-acc_hist = []
 for epoch ∈ 1:epochs
 	losses = Float32[]
 	local grads
-	local val
 	local acc_val
+	local loss_val
+	#local preds_vec
+	local loss_vec
+	local acc_vec
+	preds_vec = []
 	for (x, y) in zip(X_train, y_train)
-		val, grads = Flux.withgradient(model) do m
-			Flux.reset!(model)
-			Flux.logitbinarycrossentropy(m(x), y)
+		loss_vec = Float32[]
+		acc_vec = []
+		loss_val, grads = Flux.withgradient(model) do m
+			preds = m(x)
+			l = loss(preds, y)
+			Zygote.ignore_derivatives() do
+				Flux.reset!(model)
+				acc_val = accuracy(preds, y)
+			end
+			return l
 		end
-	end
-	push!(loss_hist, val)
+		push!(loss_vec, loss_val)
+		push!(acc_vec, acc_val)
 
-	preds = map(model) do m
-		Flux.reset!(model)
-		[m(x) for x in X_test]
 	end
-	push!(preds_hist, preds)
-	acc_val = mean(accuracy(preds, y_test))
-	push!(acc_hist, acc_val)
+	mean_loss = mean(loss_vec)
+	push!(loss_hist, mean_loss)
+
+	mean_acc = mean(acc_vec[end])
+	push!(acc_hist, mean_acc)
 
 	Flux.update!(opt_state, model, grads[1])
-	@info "Epoch $(epoch):" loss = val acc = acc_val
+	@info "Epoch $(epoch):" loss = mean_loss acc = mean_acc
 
 end
 
